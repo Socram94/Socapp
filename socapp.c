@@ -1,131 +1,173 @@
-#include <socapp_icons.h>                       // (Optionnel ici) Sert si tu utilises des icônes générées par le SDK
-#include <gui/gui.h>                             // Pour l'affichage à l'écran
-#include <input/input.h>                         // Pour gérer les entrées des boutons
-#include <furi.h>                                // Fonctions de base du firmware Flipper
-#include <notification/notification.h>           // Gestion des notifications (LED, vibration, etc.)
-#include <notification/notification_messages.h>  // Séquences de notifications pré-définies (couleurs, etc.)
+/**
+ * @file example_view_dispatcher.c
+ * @brief Example application demonstrating the usage of the ViewDispatcher library.
+ *
+ * This application can display one of two views: either a Widget or a Submenu.
+ * Each view has its own way of switching to another one:
+ *
+ * - A center button in the Widget view.
+ * - A submenu item in the Submenu view
+ *
+ * Press either to switch to a different view. Press Back to exit the application.
+ *
+ */
 
-#define TAG "socapp" // Tag utilisé pour le debug/log (pas obligatoire)
+#include <gui/gui.h>
+#include <gui/view_dispatcher.h>
 
-// Structure qui contient toutes les données de notre application
+#include <gui/modules/widget.h>
+#include <gui/modules/submenu.h>
+
+// Enumeration of the view indexes.
+typedef enum {
+    ViewIndexWidget,
+    ViewIndexSubmenu,
+    ViewIndexCount,
+} ViewIndex;
+
+// Enumeration of submenu items.
+typedef enum {
+    SubmenuIndexNothing,
+    SubmenuIndexSwitchView,
+} SubmenuIndex;
+
+// Main application structure.
 typedef struct {
-    FuriMessageQueue* input_queue;   // File de messages pour stocker les événements de touches
-    ViewPort* view_port;             // Zone d'affichage
-    Gui* gui;                        // Interface graphique
-    NotificationApp* notification;   // Gestion des LEDs / vibrations
-} socapp;
+    ViewDispatcher* view_dispatcher;
+    Widget* widget;
+    Submenu* submenu;
+} ExampleViewDispatcherApp;
 
-// ---------- FONCTION D'AFFICHAGE ----------
-// Dessine "Hello Flipper!" au centre de l'écran
-void draw_callback(Canvas* canvas, void* context) {
-    UNUSED(context); // On ne se sert pas du "context" ici
-
-    canvas_clear(canvas); // Efface l'écran
-    canvas_set_color(canvas, ColorBlack); // Définit la couleur du texte
-    canvas_set_font(canvas, FontPrimary); // Définit la police de caractères
-    // Affiche le texte centré au milieu de l'écran (64px de large, 32px de haut)
-    canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Hello c'est Socram desu!");
+// This function is called when the user has pressed the Back key.
+static bool socapp_navigation_callback(void* context) {
+    furi_assert(context);
+    ExampleViewDispatcherApp* app = context;
+    // Back means exit the application, which can be done by stopping the ViewDispatcher.
+    view_dispatcher_stop(app->view_dispatcher);
+    return true;
 }
 
-// ---------- FONCTION D'ENTRÉE ----------
-// Appelée automatiquement lorsqu'un bouton est pressé
-void input_callback(InputEvent* event, void* context) {
-    socapp* app = context; // On récupère notre structure principale
-    // On met l'événement "event" dans la file d'attente input_queue
-    furi_message_queue_put(app->input_queue, event, 0);
+// This function is called when there are custom events to process.
+static bool socapp_custom_event_callback(void* context, uint32_t event) {
+    furi_assert(context);
+    ExampleViewDispatcherApp* app = context;
+    // The event numerical value can mean different things (the application is responsible to uphold its chosen convention)
+    // In this example, the only possible meaning is the view index to switch to.
+    furi_assert(event < ViewIndexCount);
+    // Switch to the requested view.
+    view_dispatcher_switch_to_view(app->view_dispatcher, event);
+
+    return true;
 }
 
-// ---------- FONCTION PRINCIPALE ----------
-// C'est le "point d'entrée" de l'application sur le Flipper Zero
-int32_t socapp_main(void* p) {
-    UNUSED(p); // On ignore ce paramètre
-
-    // Création de la structure de l'app
-    socapp app;
-
-    // 1. Crée une "view port" (zone d'affichage)
-    app.view_port = view_port_alloc();
-
-    // 2. Crée une file d'attente pour 8 événements (de type InputEvent)
-    app.input_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
-
-    // 3. Ouvre le module "notification" pour contrôler LED/vibration
-    app.notification = furi_record_open("notification");
-
-    // 4. Définit la fonction de dessin pour notre view port
-    view_port_draw_callback_set(app.view_port, draw_callback, &app);
-
-    // 5. Définit la fonction appelée lors d'un appui de bouton
-    view_port_input_callback_set(app.view_port, input_callback, &app);
-
-    // 6. Ouvre le module graphique (GUI)
-    app.gui = furi_record_open("gui");
-
-    // 7. Ajoute notre view port à l'écran, en plein écran (GuiLayerFullscreen)
-    gui_add_view_port(app.gui, app.view_port, GuiLayerFullscreen);
-
-    // Variable pour stocker les événements de touches
-    InputEvent input;
-
-    // Variable de boucle principale
-    bool running = true;
-
-    // ---------- BOUCLE PRINCIPALE ----------
-    while(running) {
-        // Attente d'un événement de touche (infini : FuriWaitForever)
-        if(furi_message_queue_get(app.input_queue, &input, FuriWaitForever) == FuriStatusOk) {
-            // Analyse de la touche pressée
-            switch(input.key) {
-                case InputKeyLeft:
-                    // Allume LED en vert
-                    notification_message(app.notification, &sequence_set_only_green_255);
-                    break;
-                case InputKeyRight:
-                    // Allume LED en rouge
-                    notification_message(app.notification, &sequence_set_only_red_255);
-                    break;
-                case InputKeyOk:
-                    // Allume LED en bleu
-                    notification_message(app.notification, &sequence_set_only_blue_255);
-                    break;
-                case InputKeyUp:
-                case InputKeyDown:
-                case InputKeyBack:
-                    // Éteint LED
-                    notification_message(app.notification, &sequence_empty);
-                    // Arrête la boucle (quitte l'app)
-                    running = false;
-                    break;
-                default:
-                    break;
-            }
-            view_port_update(app.view_port);
-        }
+// This function is called when the user presses the "Switch View" button on the Widget view.
+static void socapp_button_callback(
+    GuiButtonType button_type,
+    InputType input_type,
+    void* context) {
+    furi_assert(context);
+    ExampleViewDispatcherApp* app = context;
+    // Only request the view switch if the user short-presses the Center button.
+    if(button_type == GuiButtonTypeCenter && input_type == InputTypeShort) {
+        // Request switch to the Submenu view via the custom event queue.
+        view_dispatcher_send_custom_event(app->view_dispatcher, ViewIndexSubmenu);
     }
+}
 
-    // ---------- NETTOYAGE AVANT SORTIE ----------
+// This function is called when the user activates the "Switch View" submenu item.
+static void socapp_submenu_callback(void* context, uint32_t index) {
+    furi_assert(context);
+    ExampleViewDispatcherApp* app = context;
+    // Only request the view switch if the user activates the "Switch View" item.
+    if(index == SubmenuIndexSwitchView) {
+        // Request switch to the Widget view via the custom event queue.
+        view_dispatcher_send_custom_event(app->view_dispatcher, ViewIndexWidget);
+    }
+}
 
-    notification_message(app.notification, &sequence_reset_red); // Réinitialise les LEDs
-    notification_message(app.notification, &sequence_reset_blue); // Réinitialise les LEDs
-    notification_message(app.notification, &sequence_reset_green); // Réinitialise les LEDs
-    // Désactive notre view port
-    view_port_enabled_set(app.view_port, false);
+// Application constructor function.
+static ExampleViewDispatcherApp* socapp_alloc() {
+    ExampleViewDispatcherApp* app = malloc(sizeof(ExampleViewDispatcherApp));
+    // Access the GUI API instance.
+    Gui* gui = furi_record_open(RECORD_GUI);
+    // Create and initialize the Widget view.
+    app->widget = widget_alloc();
+    widget_add_string_multiline_element(
+        app->widget, 64, 32, AlignCenter, AlignCenter, FontSecondary, "Press the Button below");
+    widget_add_button_element(
+        app->widget,
+        GuiButtonTypeCenter,
+        "Switch View",
+        socapp_button_callback,
+        app);
+    // Create and initialize the Submenu view.
+    app->submenu = submenu_alloc();
+    submenu_add_item(app->submenu, "Do Nothing", SubmenuIndexNothing, NULL, NULL);
+    submenu_add_item(
+        app->submenu,
+        "Switch View",
+        SubmenuIndexSwitchView,
+        socapp_submenu_callback,
+        app);
+    // Create the ViewDispatcher instance.
+    app->view_dispatcher = view_dispatcher_alloc();
+    // Let the GUI know about this ViewDispatcher instance.
+    view_dispatcher_attach_to_gui(app->view_dispatcher, gui, ViewDispatcherTypeFullscreen);
+    // Register the views within the ViewDispatcher instance. This alone will not show any of them on the screen.
+    // Each view must have its own index to refer to it later (it is best done via an enumeration as shown here).
+    view_dispatcher_add_view(app->view_dispatcher, ViewIndexWidget, widget_get_view(app->widget));
+    view_dispatcher_add_view(
+        app->view_dispatcher, ViewIndexSubmenu, submenu_get_view(app->submenu));
+    // Set the custom event callback. It will be called each time a custom event is scheduled
+    // using the view_dispatcher_send_custom_callback() function.
+    view_dispatcher_set_custom_event_callback(
+        app->view_dispatcher, socapp_custom_event_callback);
+    // Set the navigation, or back button callback. It will be called if the user pressed the Back button
+    // and the event was not handled in the currently displayed view.
+    view_dispatcher_set_navigation_event_callback(
+        app->view_dispatcher, socapp_navigation_callback);
+    // The context will be passed to the callbacks as a parameter, so we have access to our application object.
+    view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
 
-    // Retire la view port de l'écran
-    gui_remove_view_port(app.gui, app.view_port);
+    return app;
+}
 
-    // Ferme le module graphique
-    furi_record_close("gui");
+// Application destructor function.
+static void socapp_free(ExampleViewDispatcherApp* app) {
+    // All views must be un-registered (removed) from a ViewDispatcher instance
+    // before deleting it. Failure to do so will result in a crash.
+    view_dispatcher_remove_view(app->view_dispatcher, ViewIndexWidget);
+    view_dispatcher_remove_view(app->view_dispatcher, ViewIndexSubmenu);
+    // Now it is safe to delete the ViewDispatcher instance.
+    view_dispatcher_free(app->view_dispatcher);
+    // Delete the views
+    widget_free(app->widget);
+    submenu_free(app->submenu);
+    // End access to hte the GUI API.
+    furi_record_close(RECORD_GUI);
+    // Free the remaining memory.
+    free(app);
+}
 
-    // Ferme le module de notification
-    furi_record_close("notification");
+static void socapp_run(ExampleViewDispatcherApp* app) {
+    // Display the Widget view on the screen.
+    view_dispatcher_switch_to_view(app->view_dispatcher, ViewIndexWidget);
+    // This function will block until view_dispatcher_stop() is called.
+    // Internally, it uses a FuriEventLoop (see FuriEventLoop examples for more info on this).
+    view_dispatcher_run(app->view_dispatcher);
+}
 
-    // Libère la mémoire de la view port
-    view_port_free(app.view_port);
+/*******************************************************************
+ *                     vvv START HERE vvv
+ *
+ * The application's entry point - referenced in application.fam
+ *******************************************************************/
+int32_t socapp(void* arg) {
+    UNUSED(arg);
 
-    // Libère la mémoire de la file d'attente
-    furi_message_queue_free(app.input_queue);
+    ExampleViewDispatcherApp* app = socapp_alloc();
+    socapp_run(app);
+    socapp_free(app);
 
-    // Retourne 0 = succès
     return 0;
 }

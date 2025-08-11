@@ -4,9 +4,9 @@ App(
     appid="socapp",  # Must be unique
     name="Socapp",  # Displayed in menus
     apptype=FlipperAppType.EXTERNAL,
-    entry_point="socapp_main",
-    stack_size=2 * 1024,
+    entry_point="socapp",
     fap_category="Examples",
+    requires=["gui"],
     # Optional values
     # fap_version="0.1",
     fap_icon="socapp.png",  # 10x10 1-bit PNG
