@@ -14,7 +14,7 @@
 
 #include <gui/gui.h>
 #include <gui/view_dispatcher.h>
-
+#include <gui/modules/text_input.h>
 #include <gui/modules/widget.h>
 #include <gui/modules/submenu.h>
 
@@ -22,20 +22,32 @@
 typedef enum {
     ViewIndexWidget,
     ViewIndexSubmenu,
+    ViewIndexTextInput,
     ViewIndexCount,
 } ViewIndex;
+
+// Enumeration of the submenu items.
+typedef enum {
+    LedColorBlue,
+    LedColorRed,
+    LedColorGreen,
+    LedColorDisable,
+} LedColor;
 
 // Enumeration of submenu items.
 typedef enum {
     SubmenuIndexNothing,
     SubmenuIndexSwitchView,
+    SubmenuIndexTextInput,
 } SubmenuIndex;
 
 // Main application structure.
 typedef struct {
     ViewDispatcher* view_dispatcher;
     Widget* widget;
+    TextInput* text_input;
     Submenu* submenu;
+    char input_buffer[64]; //
 } ExampleViewDispatcherApp;
 
 // This function is called when the user has pressed the Back key.
@@ -74,6 +86,20 @@ static void socapp_button_callback(
     }
 }
 
+
+static void socapp_textinput_callback(void* context) {
+    furi_assert(context);
+    ExampleViewDispatcherApp* app = context;
+
+     widget_reset(app->widget);
+
+    // Utilise le texte du buffer
+    widget_add_string_multiline_element(
+        app->widget, 64, 32, AlignCenter, AlignCenter, FontSecondary, app->input_buffer);
+
+    view_dispatcher_switch_to_view(app->view_dispatcher, ViewIndexWidget);
+}
+
 // This function is called when the user activates the "Switch View" submenu item.
 static void socapp_submenu_callback(void* context, uint32_t index) {
     furi_assert(context);
@@ -83,13 +109,23 @@ static void socapp_submenu_callback(void* context, uint32_t index) {
         // Request switch to the Widget view via the custom event queue.
         view_dispatcher_send_custom_event(app->view_dispatcher, ViewIndexWidget);
     }
+
+    if(index == SubmenuIndexTextInput) {
+        // Request switch to the TextInput view via the custom event queue.
+        view_dispatcher_send_custom_event(app->view_dispatcher, ViewIndexTextInput);
+    }
 }
 
 // Application constructor function.
 static ExampleViewDispatcherApp* socapp_alloc() {
     ExampleViewDispatcherApp* app = malloc(sizeof(ExampleViewDispatcherApp));
+    memset(app, 0, sizeof(ExampleViewDispatcherApp)); // Initialise toute la structure à zéro
     // Access the GUI API instance.
     Gui* gui = furi_record_open(RECORD_GUI);
+    // Create the ViewDispatcher instance.
+    app->view_dispatcher = view_dispatcher_alloc();
+    // Let the GUI know about this ViewDispatcher instance.
+    view_dispatcher_attach_to_gui(app->view_dispatcher, gui, ViewDispatcherTypeFullscreen);
     // Create and initialize the Widget view.
     app->widget = widget_alloc();
     widget_add_string_multiline_element(
@@ -100,6 +136,14 @@ static ExampleViewDispatcherApp* socapp_alloc() {
         "Switch View",
         socapp_button_callback,
         app);
+    app->text_input = text_input_alloc();
+    text_input_set_header_text(app->text_input, "Entrez votre texte");   
+    text_input_set_result_callback(app->text_input, socapp_textinput_callback,
+        app,
+        app->input_buffer,
+        sizeof(app->input_buffer),
+        true
+    );
     // Create and initialize the Submenu view.
     app->submenu = submenu_alloc();
     submenu_add_item(app->submenu, "Do Nothing", SubmenuIndexNothing, NULL, NULL);
@@ -109,15 +153,19 @@ static ExampleViewDispatcherApp* socapp_alloc() {
         SubmenuIndexSwitchView,
         socapp_submenu_callback,
         app);
-    // Create the ViewDispatcher instance.
-    app->view_dispatcher = view_dispatcher_alloc();
-    // Let the GUI know about this ViewDispatcher instance.
-    view_dispatcher_attach_to_gui(app->view_dispatcher, gui, ViewDispatcherTypeFullscreen);
+    submenu_add_item(
+        app->submenu,
+        "Text Input",
+        SubmenuIndexTextInput,
+        socapp_submenu_callback,
+        app);
     // Register the views within the ViewDispatcher instance. This alone will not show any of them on the screen.
     // Each view must have its own index to refer to it later (it is best done via an enumeration as shown here).
     view_dispatcher_add_view(app->view_dispatcher, ViewIndexWidget, widget_get_view(app->widget));
     view_dispatcher_add_view(
         app->view_dispatcher, ViewIndexSubmenu, submenu_get_view(app->submenu));
+    view_dispatcher_add_view(
+        app->view_dispatcher, ViewIndexTextInput, text_input_get_view(app->text_input));
     // Set the custom event callback. It will be called each time a custom event is scheduled
     // using the view_dispatcher_send_custom_callback() function.
     view_dispatcher_set_custom_event_callback(
@@ -138,9 +186,11 @@ static void socapp_free(ExampleViewDispatcherApp* app) {
     // before deleting it. Failure to do so will result in a crash.
     view_dispatcher_remove_view(app->view_dispatcher, ViewIndexWidget);
     view_dispatcher_remove_view(app->view_dispatcher, ViewIndexSubmenu);
+    view_dispatcher_remove_view(app->view_dispatcher, ViewIndexTextInput);
     // Now it is safe to delete the ViewDispatcher instance.
     view_dispatcher_free(app->view_dispatcher);
     // Delete the views
+    text_input_free(app->text_input);
     widget_free(app->widget);
     submenu_free(app->submenu);
     // End access to hte the GUI API.
@@ -151,7 +201,7 @@ static void socapp_free(ExampleViewDispatcherApp* app) {
 
 static void socapp_run(ExampleViewDispatcherApp* app) {
     // Display the Widget view on the screen.
-    view_dispatcher_switch_to_view(app->view_dispatcher, ViewIndexWidget);
+    view_dispatcher_switch_to_view(app->view_dispatcher, ViewIndexSubmenu);
     // This function will block until view_dispatcher_stop() is called.
     // Internally, it uses a FuriEventLoop (see FuriEventLoop examples for more info on this).
     view_dispatcher_run(app->view_dispatcher);
