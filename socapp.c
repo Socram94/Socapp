@@ -15,8 +15,8 @@
 #include <gui/gui.h>
 #include <gui/view_dispatcher.h>
 #include <gui/modules/text_input.h>
+#include <gui/modules/loading.h>
 #include <gui/modules/widget.h>
-#include <gui/modules/popup.h>
 #include <gui/modules/submenu.h>
 
 // Enumeration of the view indexes.
@@ -24,8 +24,8 @@ typedef enum {
     ViewIndexWidget,
     ViewIndexSubmenu,
     ViewIndexTextInput,
-    ViewIndexPopup, // This is an example of a view that could be used for popups.
     ViewIndexCount,
+    ViewIndexLoading, // This is not a view, but a loading screen that can be shown while switching views.
 } ViewIndex;
 
 // Enumeration of the submenu items.
@@ -41,7 +41,6 @@ typedef enum {
     SubmenuIndexNothing,
     SubmenuIndexSwitchView,
     SubmenuIndexTextInput,
-    SubmenuIndexPopup,
 } SubmenuIndex;
 
 // Main application structure.
@@ -50,7 +49,7 @@ typedef struct {
     Widget* widget;
     TextInput* text_input;
     Submenu* submenu;
-    Popup* popup; // This is an example of a view that could be used for popups.
+    Loading* loading;
     char input_buffer[64]; //
 } SocappViewDispatcherApp;
 
@@ -85,34 +84,24 @@ static void socapp_button_callback(
     // Only request the view switch if the user short-presses the Center button.
     if(button_type == GuiButtonTypeCenter && input_type == InputTypeShort) {
         // Request switch to the Submenu view via the custom event queue.
+              // Afficher l'écran de chargement
+        view_dispatcher_switch_to_view(app->view_dispatcher, ViewIndexLoading);
+
+        // Optionnel : lancer une action asynchrone, puis passer au Submenu
+        // Exemple : on attend un court délai pour simuler un chargement
+        furi_delay_ms(2000);
         view_dispatcher_send_custom_event(app->view_dispatcher, ViewIndexSubmenu);
     }
 }
 
-static void socapp_popup_callback(void* context) {
-    furi_assert(context);
-    SocappViewDispatcherApp* app = context;
-
-    // Reset the widget view.
-    widget_reset(app->widget);
-  
-      widget_add_string_multiline_element(
-        app->widget,
-        64, 32,
-        AlignCenter, AlignCenter,
-        FontSecondary,
-        "Retour depuis popup"
-    );
-    // Show the Popup view.
-    view_dispatcher_switch_to_view(app->view_dispatcher, ViewIndexWidget);
-}
 
 static void socapp_textinput_callback(void* context) {
     furi_assert(context);
     SocappViewDispatcherApp* app = context;
 
-     widget_reset(app->widget);
-
+    widget_reset(app->widget);
+    
+    
     // Utilise le texte du buffer
     widget_add_string_multiline_element(
         app->widget, 64, 32, AlignCenter, AlignCenter, FontSecondary, app->input_buffer);
@@ -134,12 +123,7 @@ static void socapp_submenu_callback(void* context, uint32_t index) {
         // Request switch to the TextInput view via the custom event queue.
         view_dispatcher_send_custom_event(app->view_dispatcher, ViewIndexTextInput);
     }
-
-    if (index == SubmenuIndexPopup) {
-        // Request switch to the Popup view via the custom event queue.
-        view_dispatcher_send_custom_event(app->view_dispatcher, ViewIndexPopup);
-        // Create and show the Popup view.
-    }
+    
 }
 
 // Application constructor function.
@@ -152,10 +136,9 @@ static SocappViewDispatcherApp* socapp_alloc() {
     app->view_dispatcher = view_dispatcher_alloc();
     // Let the GUI know about this ViewDispatcher instance.
     view_dispatcher_attach_to_gui(app->view_dispatcher, gui, ViewDispatcherTypeFullscreen);
-
-    
     // Create and initialize the Widget view.
     app->widget = widget_alloc();
+    app->loading = loading_alloc();
     widget_add_string_multiline_element(
         app->widget, 64, 32, AlignCenter, AlignCenter, FontSecondary, "Press the Button below");
     widget_add_button_element(
@@ -172,20 +155,8 @@ static SocappViewDispatcherApp* socapp_alloc() {
         sizeof(app->input_buffer),
         true
     );
-
-    app->popup = popup_alloc();
-    popup_set_timeout(app->popup, 3000); // 2 secondes
-    popup_enable_timeout(app->popup);    // active le timeout   
-    popup_set_header(app->popup, "Popup Example", 10, 10, AlignCenter, AlignCenter);
-    popup_set_text(app->popup, "This is an example of a popup view.",10, 10, AlignCenter, AlignCenter);
-    popup_set_callback(app->popup, socapp_popup_callback);
-    popup_set_context(app->popup, app);
-    
-
-        //view_dispatcher_switch_to_view(app->view_dispatcher, ViewIndexPopup);
     // Create and initialize the Submenu view.
     app->submenu = submenu_alloc();
-    submenu_add_item(app->submenu, "Popup", SubmenuIndexPopup, socapp_submenu_callback, app);
     submenu_add_item(app->submenu, "Do Nothing", SubmenuIndexNothing, NULL, NULL);
     submenu_add_item(
         app->submenu,
@@ -199,17 +170,18 @@ static SocappViewDispatcherApp* socapp_alloc() {
         SubmenuIndexTextInput,
         socapp_submenu_callback,
         app);
-
-        
     // Register the views within the ViewDispatcher instance. This alone will not show any of them on the screen.
     // Each view must have its own index to refer to it later (it is best done via an enumeration as shown here).
     view_dispatcher_add_view(app->view_dispatcher, ViewIndexWidget, widget_get_view(app->widget));
-    view_dispatcher_add_view(app->view_dispatcher, ViewIndexPopup, popup_get_view(app->popup));
-    // Register the Submenu view.
     view_dispatcher_add_view(
         app->view_dispatcher, ViewIndexSubmenu, submenu_get_view(app->submenu));
     view_dispatcher_add_view(
         app->view_dispatcher, ViewIndexTextInput, text_input_get_view(app->text_input));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        ViewIndexLoading,                      // un index que tu définis pour l'écran de chargement
+        loading_get_view(app->loading)
+    );
     // Set the custom event callback. It will be called each time a custom event is scheduled
     // using the view_dispatcher_send_custom_callback() function.
     view_dispatcher_set_custom_event_callback(
@@ -231,13 +203,12 @@ static void socapp_free(SocappViewDispatcherApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, ViewIndexWidget);
     view_dispatcher_remove_view(app->view_dispatcher, ViewIndexSubmenu);
     view_dispatcher_remove_view(app->view_dispatcher, ViewIndexTextInput);
-    view_dispatcher_remove_view(app->view_dispatcher, ViewIndexPopup);
+    view_dispatcher_remove_view(app->view_dispatcher, ViewIndexLoading);
     // Now it is safe to delete the ViewDispatcher instance.
     view_dispatcher_free(app->view_dispatcher);
-    // Free the Popup view.
-    popup_free(app->popup);
     // Delete the views
     text_input_free(app->text_input);
+    loading_free(app->loading);
     widget_free(app->widget);
     submenu_free(app->submenu);
     // End access to hte the GUI API.
