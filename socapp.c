@@ -8,6 +8,7 @@
 #include <gui/modules/loading.h>
 #include <gui/modules/popup.h>
 #include <gui/modules/widget.h>
+#include <gui/modules/number_input.h>
 #include <gui/modules/submenu.h>
 
 // Enumeration of the view indexes.
@@ -15,6 +16,7 @@ typedef enum {
     ViewIndexWidget,
     ViewIndexSubmenu,
     ViewIndexTextInput,
+    ViewIndexNumberInput,
     ViewIndexLoading,
     ViewIndexPopup,
     ViewIndexCount,
@@ -28,6 +30,7 @@ typedef enum {
 // Enumeration of submenu items.
 typedef enum {
     SubmenuIndexNothing,
+    SubmenuIndexNumberInput,
     SubmenuIndexSwitchView,
     SubmenuIndexTextInput,
 } SubmenuIndex;
@@ -38,8 +41,10 @@ typedef struct {
     Widget* widget;
     TextInput* text_input;
     Submenu* submenu;
+    NumberInput* number_input;
     Popup* popup;
     Loading* loading;
+    int32_t current_number; 
     char input_buffer[64];
 } SocappViewDispatcherApp;
 
@@ -86,6 +91,17 @@ static void socapp_button_callback(
     }
 }
 
+static void scocapp_numberinput_callback(void *context, int32_t number) {
+    furi_assert(context);
+    SocappViewDispatcherApp* app = context;
+
+    widget_reset(app->widget);
+    itoa(number, app->input_buffer, 10);
+    widget_add_string_multiline_element(
+        app->widget, 64, 32, AlignCenter, AlignCenter, FontSecondary, app->input_buffer);
+    view_dispatcher_switch_to_view(app->view_dispatcher, ViewIndexWidget);
+}
+
 // Popup timeout callback → envoie un event custom
 static void socapp_popup_callback(void* context) {
     furi_assert(context);
@@ -118,6 +134,11 @@ static void socapp_submenu_callback(void* context, uint32_t index) {
     if(index == SubmenuIndexTextInput) {
         view_dispatcher_send_custom_event(app->view_dispatcher, ViewIndexTextInput);
     }
+
+    if(index == SubmenuIndexNumberInput) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, ViewIndexNumberInput);
+    }
+    
 }
 
 // Application constructor
@@ -166,6 +187,17 @@ static SocappViewDispatcherApp* socapp_alloc() {
         sizeof(app->input_buffer),
         true);
 
+    // Number input
+    app->number_input = number_input_alloc();
+    number_input_set_header_text (app->number_input, "Choissiez un nombre");
+    number_input_set_result_callback (
+        app->number_input, 
+        scocapp_numberinput_callback, 
+        app, 
+        app->current_number, 
+        0, 
+        100);
+
     // Submenu
     app->submenu = submenu_alloc();
     submenu_add_item(app->submenu, "Do Nothing", SubmenuIndexNothing, NULL, NULL);
@@ -181,6 +213,14 @@ static SocappViewDispatcherApp* socapp_alloc() {
         SubmenuIndexTextInput,
         socapp_submenu_callback,
         app);
+    submenu_add_item(
+        app->submenu,
+        "Number Input",
+        SubmenuIndexNumberInput,
+        socapp_submenu_callback,
+        app);
+
+
 
     // Register views
     view_dispatcher_add_view(app->view_dispatcher, ViewIndexWidget, widget_get_view(app->widget));
@@ -188,6 +228,7 @@ static SocappViewDispatcherApp* socapp_alloc() {
     view_dispatcher_add_view(app->view_dispatcher, ViewIndexTextInput, text_input_get_view(app->text_input));
     view_dispatcher_add_view(app->view_dispatcher, ViewIndexPopup, popup_get_view(app->popup));
     view_dispatcher_add_view(app->view_dispatcher, ViewIndexLoading, loading_get_view(app->loading));
+    view_dispatcher_add_view(app->view_dispatcher, ViewIndexNumberInput, number_input_get_view(app->number_input));
 
     // Callbacks
     view_dispatcher_set_custom_event_callback(app->view_dispatcher, socapp_custom_event_callback);
@@ -204,12 +245,14 @@ static void socapp_free(SocappViewDispatcherApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, ViewIndexTextInput);
     view_dispatcher_remove_view(app->view_dispatcher, ViewIndexLoading);
     view_dispatcher_remove_view(app->view_dispatcher, ViewIndexPopup);
+    view_dispatcher_remove_view(app->view_dispatcher, ViewIndexNumberInput);
 
     view_dispatcher_free(app->view_dispatcher);
 
     text_input_free(app->text_input);
     popup_free(app->popup);
     loading_free(app->loading);
+    number_input_free(app->number_input);
     widget_free(app->widget);
     submenu_free(app->submenu);
 
